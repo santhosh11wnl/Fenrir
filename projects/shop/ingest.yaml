@@ -1,0 +1,31 @@
+# What to index, and WHO MAY SEE IT.
+#
+# `metadata.audience` is the access control. A chunk tagged `staff` is never
+# retrieved for a customer -- the filter runs in the vector query, so the text
+# never enters the model's context and cannot be extracted from it.
+#
+# Untagged documents default to `public`. That way a forgotten tag makes a
+# document visible (a mistake you notice) rather than invisible (a mistake you
+# do not). Tag anything sensitive explicitly.
+
+sources:
+  # Everyone, including anonymous visitors.
+  - type: directory
+    path: ./data
+    include: ["*.md"]
+    metadata:
+      audience: public
+
+  # Support agents and above.
+  - type: directory
+    path: ./data/staff
+    include: ["**/*.md"]
+    metadata:
+      audience: staff
+
+  # Administrators only.
+  - type: directory
+    path: ./data/internal
+    include: ["**/*.md"]
+    metadata:
+      audience: internal

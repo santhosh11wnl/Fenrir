@@ -1,0 +1,68 @@
+# What to index into this project's knowledge base.
+#
+# Run after editing:
+#     uv run python -m chatbot_core.ingest projects/<name>
+#
+# Ingest is idempotent: a document's existing chunks are deleted before its new
+# ones are written, so re-running after an edit updates rather than duplicates,
+# and a document that shrank doesn't leave orphaned chunks behind.
+#
+# Supported: .md .txt .rst .csv .json .yaml  ·  .pdf  ·  .html  ·  .docx
+# A document that can't be extracted honestly (a scanned PDF with no text
+# layer, say) is skipped and reported — never indexed as noise.
+#
+# Paths are relative to this project directory.
+
+sources:
+  # ---- local files -------------------------------------------------------
+  - type: directory
+    path: ./data
+    include:
+      - "**/*.md"
+      - "**/*.txt"
+      - "**/*.pdf"
+      - "**/*.html"
+      - "**/*.docx"
+    exclude:
+      - "**/drafts/**"
+    # Attached to every chunk from this source, so a query can be filtered to
+    # one domain later.
+    metadata:
+      source_type: local
+
+  # ---- documents fetched from the web ------------------------------------
+  # Placeholder corpus so retrieval is demonstrable before your real data
+  # arrives. These are stable, public, and freely redistributable. Replace
+  # them wholesale when you have the actual documents.
+  #
+  # Fetched bodies are cached under .cache/ — re-ingesting doesn't re-download,
+  # and an ingest is reproducible offline. Set `refresh: true` to force a refetch.
+
+  - type: url
+    url: https://peps.python.org/pep-0008/
+    title: "PEP 8 - Style Guide for Python Code"
+    metadata:
+      source_type: reference
+      topic: python
+
+  - type: url
+    url: https://peps.python.org/pep-0020/
+    title: "PEP 20 - The Zen of Python"
+    metadata:
+      source_type: reference
+      topic: python
+
+  - type: url
+    url: https://peps.python.org/pep-0257/
+    title: "PEP 257 - Docstring Conventions"
+    metadata:
+      source_type: reference
+      topic: python
+
+  # A real PDF, to exercise the PDF path rather than only HTML.
+  - type: url
+    url: https://arxiv.org/pdf/1706.03762
+    title: "Attention Is All You Need"
+    metadata:
+      source_type: paper
+      topic: machine-learning

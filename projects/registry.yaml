@@ -1,0 +1,36 @@
+# Site and model registry -- the source of truth for the fleet.
+#
+# Written by the control service when you edit the dashboard, and safe to edit
+# by hand. Commit it: this file is the only place the shape of all seven sites
+# is visible at once, and its history is your rollback.
+#
+# Secrets live in environment variables named here, never inline.
+
+models:
+  # One shared model server for every site. Seven copies of a 7B model is
+  # ~33GB of idle VRAM and seven cold prefix caches; one warm pool serves all
+  # of them faster, because the weights and the KV cache stay hot.
+  #
+  # Give a site its own entry only when it genuinely differs -- another
+  # language, a fine-tune, or a data-residency rule.
+  default:
+    label: Qwen 2.5 7B
+    base_url: http://host.docker.internal:11434/v1
+    id: qwen2.5:7b
+    supports_tools: true
+    max_tokens: 4096
+    api_key_env: null
+    notes: Shared pool. Runs natively on the host for Metal access on macOS.
+
+sites:
+  - id: shop
+    label: Fenrir
+    base_url: http://localhost:8000
+    model: default
+    # The control service reads this from its own environment and attaches it
+    # server-side, so no admin key ever reaches the dashboard bundle.
+    admin_key_env: SHOP_ADMIN_KEY
+    widget_origin: http://localhost:5173
+    enabled: true
+    tags:
+      - demo

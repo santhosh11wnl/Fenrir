@@ -1,0 +1,23 @@
+[project]
+name = "mcp-server-core"
+version = "0.1.0"
+description = "Base MCP server: tool registry, transports, and built-in tools"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # 2.x only -- this package uses MCPServer, which v1 called FastMCP.
+    "mcp>=2.2,<3",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "structlog>=24.4",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+mcp-server = "mcp_server_core.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_server_core"]

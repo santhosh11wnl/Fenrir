@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fenrir — demo</title>
+    <style>
+      /* Demo host page. Stands in for one of your websites so the widget can be
+         judged in context rather than against a blank rectangle.
+
+         The animated background is deliberately confined to a fixed layer
+         behind everything, with pointer-events off, so it cannot interfere
+         with the widget it exists to show off. */
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        overflow-x: hidden;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #f4f2ff;
+        background: #07060e;
+      }
+
+      /* ---- animated backdrop ---------------------------------------------- */
+
+      .bg {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        overflow: hidden;
+        pointer-events: none;   /* never steals a click from the widget */
+      }
+
+      /* Slow-drifting colour fields. Transform-only animation, so it runs on
+         the compositor and does not repaint on every frame. */
+      .orb {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(90px);
+        opacity: 0.5;
+        will-change: transform;
+      }
+
+      .orb--1 {
+        width: 620px; height: 620px;
+        top: -220px; left: -160px;
+        background: radial-gradient(circle, #7c3aed, transparent 68%);
+        animation: drift1 26s ease-in-out infinite;
+      }
+
+      .orb--2 {
+        width: 560px; height: 560px;
+        top: 18%; right: -180px;
+        background: radial-gradient(circle, #c026d3, transparent 68%);
+        animation: drift2 32s ease-in-out infinite;
+      }
+
+      .orb--3 {
+        width: 700px; height: 700px;
+        bottom: -300px; left: 26%;
+        background: radial-gradient(circle, #4c1d95, transparent 70%);
+        animation: drift3 38s ease-in-out infinite;
+      }
+
+      @keyframes drift1 {
+        50% { transform: translate(140px, 90px) scale(1.15); }
+      }
+      @keyframes drift2 {
+        50% { transform: translate(-120px, 140px) scale(0.9); }
+      }
+      @keyframes drift3 {
+        50% { transform: translate(90px, -110px) scale(1.1); }
+      }
+
+      /* Lightning.
+
+         Drawn as jagged SVG paths rather than rotated divs -- a straight line
+         reads as a laser, and the kink is most of what makes a bolt legible at
+         a glance.
+
+         Cycles are short (4-7s) and mutually prime-ish, so strikes land in
+         different places at uneven intervals. The earlier version struck once
+         every 9s for 0.45s, which left the page static ~95% of the time; this
+         one always has something happening without becoming a strobe. */
+      .bolt {
+        position: absolute;
+        top: -2%;
+        height: 72%;
+        opacity: 0;
+        overflow: visible;
+        filter: drop-shadow(0 0 7px #c084fc) drop-shadow(0 0 22px #7c3aed);
+      }
+
+      .bolt path {
+        fill: none;
+        stroke: #f5f3ff;
+        stroke-width: 1.7;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+      }
+
+      /* The wide, dim under-stroke is the discharge halo around the core. */
+      .bolt path.glow {
+        stroke: #a855f7;
+        stroke-width: 6;
+        opacity: 0.55;
+      }
+
+      /* Kept out of the centre column: the copy sits in a 720px band, and a
+         bolt at full brightness directly over a paragraph makes it unreadable
+         for the moment it fires. */
+      .bolt--a { left: 10%; animation: strike 4.3s 0.6s infinite; }
+      .bolt--b { left: 79%; animation: strike 5.9s 2.1s infinite; }
+      .bolt--c { left: 24%; height: 54%; animation: strike 7.1s 4.4s infinite; }
+
+      /* The far bolt. Thinner and dimmer, so it reads as distance -- and so
+         that where the text column falls relative to 24% (which shifts with
+         viewport width) stops mattering. */
+      .bolt--c path       { stroke: #ddd0f7; stroke-width: 1.2; }
+      .bolt--c path.glow  { stroke-width: 4; opacity: 0.3; }
+
+      /* Real lightning flickers and cuts out; it does not fade. Several
+         discrete steps in ~7% of the cycle give the strike its stutter. */
+      @keyframes strike {
+        0%, 86%, 100% { opacity: 0; }
+        87%   { opacity: 1; }
+        88.5% { opacity: 0.1; }
+        89.5% { opacity: 0.9; }
+        90.5% { opacity: 0.25; }
+        91.5% { opacity: 0.7; }
+        93%   { opacity: 0; }
+      }
+
+      /* Sheet flash, timed with each bolt so the whole sky reacts. */
+      .flash {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+      }
+
+      .flash--a {
+        background: radial-gradient(ellipse at 18% 0%, #a855f7, transparent 55%);
+        animation: sheet 4.3s 0.6s infinite;
+      }
+      .flash--b {
+        background: radial-gradient(ellipse at 64% 0%, #c026d3, transparent 55%);
+        animation: sheet 5.9s 2.1s infinite;
+      }
+
+      @keyframes sheet {
+        0%, 86%, 100% { opacity: 0; }
+        87%   { opacity: 0.18; }
+        89.5% { opacity: 0.10; }
+        91.5% { opacity: 0.06; }
+        93%   { opacity: 0; }
+      }
+
+      /* Fine grid, for depth rather than decoration. */
+      .grid {
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(168,85,247,0.055) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(168,85,247,0.055) 1px, transparent 1px);
+        background-size: 54px 54px;
+        mask-image: radial-gradient(ellipse at 50% 35%, #000 20%, transparent 78%);
+      }
+
+      /* ---- content -------------------------------------------------------- */
+
+      main {
+        position: relative;
+        z-index: 1;
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 120px 28px 160px;
+      }
+
+      .eyebrow {
+        display: inline-block;
+        padding: 5px 13px;
+        margin-bottom: 22px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #d8b4fe;
+        background: rgba(124, 58, 237, 0.14);
+        border: 1px solid rgba(168, 85, 247, 0.3);
+        border-radius: 99px;
+      }
+
+      h1 {
+        margin: 0 0 18px;
+        font-size: clamp(2.4rem, 6vw, 3.6rem);
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        background: linear-gradient(135deg, #fff 20%, #c084fc 85%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      p {
+        margin: 0 0 16px;
+        font-size: 1.02rem;
+        line-height: 1.7;
+        color: #b8b0d4;
+      }
+
+      .hint {
+        display: inline-flex;
+        gap: 9px;
+        align-items: center;
+        margin-top: 26px;
+        padding: 11px 17px;
+        font-size: 14px;
+        color: #e9d5ff;
+        background: rgba(124, 58, 237, 0.11);
+        border: 1px solid rgba(168, 85, 247, 0.26);
+        border-radius: 13px;
+      }
+
+      .hint__dot {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: #c084fc;
+        box-shadow: 0 0 10px #a855f7;
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      @keyframes pulse { 50% { opacity: 0.3; } }
+
+      code {
+        padding: 2px 7px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 0.86em;
+        color: #e9d5ff;
+        background: rgba(168, 85, 247, 0.12);
+        border-radius: 5px;
+      }
+
+      /* Below the copy's own width there is no clear column left to strike
+         into, so the bolts would fire straight through the text. Dim them and
+         leave the drifting colour fields to carry the backdrop. */
+      @media (max-width: 800px) {
+        .bolt { opacity: 0; animation: none; }
+      }
+
+      /* Someone who asked for less motion should not get a lightning storm. */
+      @media (prefers-reduced-motion: reduce) {
+        .orb, .bolt, .flash, .hint__dot { animation: none; }
+        .bolt { opacity: 0.18; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true">
+      <div class="grid"></div>
+      <div class="orb orb--1"></div>
+      <div class="orb orb--2"></div>
+      <div class="orb orb--3"></div>
+      <!-- Each bolt is one jagged polyline drawn twice: a wide soft stroke for
+           the discharge halo, then the bright core on top. preserveAspectRatio
+           is "none" so a bolt stretches to whatever height it is given. -->
+      <svg class="bolt bolt--a" viewBox="0 0 40 200" preserveAspectRatio="none">
+        <path class="glow" d="M21 0 L11 62 L24 68 L9 138 L19 143 L6 200" />
+        <path d="M21 0 L11 62 L24 68 L9 138 L19 143 L6 200" />
+      </svg>
+      <svg class="bolt bolt--b" viewBox="0 0 40 200" preserveAspectRatio="none">
+        <path class="glow" d="M16 0 L27 55 L14 61 L30 126 L18 132 L27 200" />
+        <path d="M16 0 L27 55 L14 61 L30 126 L18 132 L27 200" />
+      </svg>
+      <svg class="bolt bolt--c" viewBox="0 0 40 200" preserveAspectRatio="none">
+        <path class="glow" d="M19 0 L8 70 L22 77 L12 145 L23 152 L14 200" />
+        <path d="M19 0 L8 70 L22 77 L12 145 L23 152 L14 200" />
+      </svg>
+      <div class="flash flash--a"></div>
+      <div class="flash flash--b"></div>
+    </div>
+
+    <main>
+      <span class="eyebrow">Prototype</span>
+      <h1>Fenrir</h1>
+      <p>
+        This page stands in for one of your websites. The assistant mounts
+        itself into <code>document.body</code>, so embedding it on a real site
+        is a single script tag.
+      </p>
+      <p>
+        It answers from that site's own documents and cites what it used. What
+        it can see depends on who is asking — a customer and a support agent
+        get different answers to the same question, because they retrieve from
+        different material.
+      </p>
+      <div class="hint">
+        <span class="hint__dot"></span>
+        Open it with the button in the corner
+      </div>
+    </main>
+
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

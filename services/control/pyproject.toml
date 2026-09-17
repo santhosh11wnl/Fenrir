@@ -1,0 +1,28 @@
+[project]
+name = "control"
+version = "0.1.0"
+description = "Control plane: site registry, project config, and the admin proxy"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "chatbot-core",
+    # Depends on `api` for configure_logging, so both services emit the same
+    # structlog format into the same aggregator.
+    "api",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    "structlog>=24.4",
+]
+
+[project.scripts]
+control-api = "control.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/control"]

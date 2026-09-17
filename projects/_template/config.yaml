@@ -1,0 +1,161 @@
+# Project configuration.
+#
+# Copy this directory to create a new project:
+#     uv run python scripts/new_project.py my-project --name "My Assistant"
+#
+# Every key here is validated against chatbot_core.config at startup. Unknown
+# keys are a hard error, not a warning -- a typo should fail the boot rather
+# than silently disable the setting you thought you set.
+#
+# ${VAR} reads the environment; ${VAR:-default} supplies a fallback. Secrets
+# belong in the environment, never in this file: it is committed.
+
+project:
+  id: template-bot
+  name: Template Assistant
+  description: Starting point for a new project. Copy, rename, and edit.
+
+# The system prompt defines the assistant's job and boundaries. Be concrete:
+# vague instructions produce a vague assistant, and "be helpful" tells it
+# nothing it didn't already assume.
+system_prompt: |
+  You are a helpful assistant for this project.
+
+  Ground your answers in the knowledge base. Search it whenever a question
+  depends on project-specific information rather than general knowledge, and
+  cite the passages you used as [1], [2], and so on.
+
+  When the knowledge base does not contain the answer, say so plainly rather
+  than filling the gap from general knowledge. A wrong answer delivered
+  confidently is worse than an admission that you don't know.
+
+  Keep responses focused and concise. Answer the question that was asked.
+
+model:
+  # local = a model you host, over the OpenAI-compatible protocol.
+  # Works with Ollama, vLLM, llama.cpp, LM Studio, and HF TGI — the backend is
+  # base_url, not a code path. No external API, no per-token cost, and no data
+  # leaving your infrastructure.
+  provider: local
+
+  # Whatever your server calls the model. On Ollama that's the pulled tag.
+  # Dev laptop:   qwen2.5:7b          (~4.7GB, comfortable in 16GB)
+  # Small server: qwen2.5:14b         (~9GB)
+  # Big server:   qwen2.5:72b or llama3.3:70b on vLLM
+  # Only this line and base_url change between them.
+  id: ${MODEL_ID:-qwen2.5:7b}
+
+  # Must end in /v1. Inside compose use the service name, not localhost:
+  # each container has its own loopback, so localhost would point at the API.
+  base_url: ${MODEL_BASE_URL:-http://ollama:11434/v1}
+
+  # Turn on only for models that reliably emit structured tool calls
+  # (Qwen 2.5+, Llama 3.1+, Mistral-Nemo, Hermes). A model that hallucinates
+  # tool syntax into its prose is worse than one with no tools at all.
+  supports_tools: true
+
+  max_tokens: 1024
+  temperature: 0.3        # low: this is a grounded Q&A bot, not a writing tool
+  request_timeout: 300    # generous — a cold model loads weights first
+
+retrieval:
+  enabled: true
+  embedding:
+    # local  = sentence-transformers in-process (free, no network at query time)
+    # huggingface = hosted Inference API (no local weights, adds a round trip)
+    provider: local
+    # 384-dim, 512-token window, ~130MB. Preferred over all-MiniLM-L6-v2,
+    # whose window is only 256 tokens — see max_sequence_length below.
+    model: BAAI/bge-small-en-v1.5
+    # Must match the model. A mismatch makes every similarity score meaningless,
+    # so it is checked against the existing index at startup.
+    dimensions: 384
+    # The model's input window. Text beyond it is DISCARDED by the model with
+    # no error, so a larger chunk is only half-indexed and retrieval quietly
+    # degrades. chunk.size is validated against this at config load, and this
+    # value is cross-checked against the model actually loaded.
+    max_sequence_length: 512
+  chunk:
+    # Tokens, measured with the embedding model's own tokenizer.
+    # Must be <= embedding.max_sequence_length.
+    size: 512
+    overlap: 64
+  # lancedb = embedded, file-based, zero setup (dev, single replica)
+  # pgvector = Postgres (prod, or any project running more than one replica)
+  backend: lancedb
+  top_k: 3
+  # Cosine similarity floor. Passages below this are dropped even if they rank
+  # in the top k -- better to retrieve nothing than to ground an answer in noise.
+  score_threshold: 0.3
+  # true  = the model decides when to search (cheaper; recovers from a bad query)
+  # false = every turn gets top-k prepended (one round trip; always pays the cost)
+  as_tool: false
+
+mcp:
+  enabled: true
+  # http  = the MCP server is its own service (deployed)
+  # stdio = launched as a subprocess (local dev, Claude Desktop/Code)
+  transport: http
+  url: ${MCP_SERVER_URL:-http://localhost:8765/mcp}
+  tools:
+    # Deny wins over allow. "*" means every tool the server advertises, which is
+    # fine when the server is yours and not fine when it is shared.
+    allow: ["*"]
+    deny: ["fetch_url", "server_info", "project_status"]
+  # Ceiling on agent-loop iterations, so a misbehaving tool can't spin up an
+  # unbounded bill.
+  max_iterations: 12
+
+auth:
+  # Off by default so a freshly stamped project runs locally with no setup.
+  # It will REFUSE TO START with auth off unless ENVIRONMENT is local/dev/test,
+  # so this default cannot reach a server by accident.
+  enabled: true
+  mode: api_key
+
+  # Users live here, relative to this project directory. Gitignored: it holds
+  # credential hashes.
+  users_file: users.yaml
+
+  # Roles are defined per project -- this website's vocabulary, not the
+  # platform's. Another project can define an entirely different set.
+  #
+  # Permissions are a fixed vocabulary, because each corresponds to an actual
+  # check in the code:
+  #   chat          send messages to the assistant
+  #   history       read back conversations
+  #   admin         read admin endpoints (usage, index status)
+  #   ingest        trigger a corpus re-ingest
+  #   manage_users  manage this project's users
+  roles:
+    admin:
+      description: Full access to this assistant.
+      permissions: [chat, history, admin, ingest, manage_users]
+    support:
+      description: Support staff — can chat and review conversations.
+      permissions: [chat, history]
+    customer:
+      description: End user of the website.
+      permissions: [chat]
+
+  # Assigned when a user is created without an explicit --role.
+  default_role: customer
+
+  # Manage users with:
+  #   uv run python scripts/manage_users.py roles <project>
+  #   uv run python scripts/manage_users.py add <project> alice --role support
+
+theme:
+  primary: "#2563eb"
+  accent: "#7c3aed"
+  logo_url: null
+  greeting: How can I help?
+  placeholder: Ask a question...
+  suggestions:
+    - What can you help me with?
+    - What's in your knowledge base?
+
+limits:
+  max_history_messages: 40
+  max_input_chars: 16000
+  requests_per_minute: 20

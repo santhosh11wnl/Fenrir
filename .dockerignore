@@ -1,0 +1,19 @@
+# Keep the build context small: it is uploaded to the daemon on every build.
+.git
+.venv
+.run
+storage
+node_modules
+web/dist
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.cache
+# Fetched corpora are rebuilt by ingest; shipping them bloats the image.
+projects/*/.cache
+.env
+.env.*
+!.env.example
+.DS_Store

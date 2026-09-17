@@ -1,0 +1,49 @@
+# Development overlay: mount the source instead of using the baked copy.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   # or, with the shell helpers:  mcpdev
+#
+# Why this exists
+# ---------------
+# The production image bakes the source in, which is correct for deployment and
+# a trap in development: `config.yaml` is mounted (so config edits apply
+# instantly) while the *code* is not (so code edits do not). Change both and you
+# get a container whose code cannot parse its own config -- which shows up as a
+# crash loop or a 404 on a route you just wrote, with nothing obviously wrong.
+#
+# Mounting the source keeps the two in step. `--reload` restarts the process on
+# save; note it rebuilds the engine each time, including reloading the embedding
+# model, so a save costs a few seconds.
+#
+# The virtualenv is deliberately NOT mounted -- it stays the image's own, built
+# for linux/arm64 inside the container. Overlaying a macOS .venv would shadow it
+# with binaries the container cannot execute.
+
+services:
+  api:
+    command: ["chat-api", "--port", "8000", "--reload"]
+    environment:
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ./packages:/app/packages
+      - ./services:/app/services
+      - ./projects:/app/projects
+      - ./scripts:/app/scripts
+      - vector-store:/app/storage
+      - hf-cache:/app/.cache/huggingface
+
+  mcp-server:
+    volumes:
+      - ./packages:/app/packages
+      - ./projects:/app/projects
+
+  # The ingest job needs the mount too. Without it, a config using a field the
+  # baked code does not know fails validation -- the same stale-image trap, in
+  # the one place you hit it most often while iterating on content.
+  ingest:
+    volumes:
+      - ./packages:/app/packages
+      - ./services:/app/services
+      - ./projects:/app/projects
+      - vector-store:/app/storage
+      - hf-cache:/app/.cache/huggingface

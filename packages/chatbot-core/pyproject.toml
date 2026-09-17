@@ -1,0 +1,57 @@
+[project]
+name = "chatbot-core"
+version = "0.1.0"
+description = "Provider-agnostic chat engine with retrieval and MCP tool use"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # Client for the OpenAI-compatible protocol. Talks to *your* server
+    # (Ollama, vLLM, llama.cpp, LM Studio); no OpenAI account involved.
+    "openai>=1.54",
+    # 2.x only. v1's FastMCP/stdio_client/streamablehttp_client helpers and its
+    # camelCase `inputSchema`/`isError` fields do not exist here, and the code
+    # in chatbot_core.mcp is written against the v2 shapes.
+    "mcp>=2.2,<3",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+# Local embeddings. Pulls torch (~2GB) — omit on machines that only talk to a
+# remote embedding endpoint.
+local-embeddings = [
+    "sentence-transformers>=3.3",
+]
+# Hosted inference / gated model downloads.
+huggingface = [
+    "huggingface-hub>=0.26",
+]
+# Anthropic's API. Optional — the default provider is a model you host.
+anthropic = [
+    "anthropic[mcp]>=0.69",
+]
+# Document extraction for the ingest pipeline: PDFs, HTML, and Office files.
+documents = [
+    "pypdf>=5.1",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.3",
+    "python-docx>=1.1",
+]
+lancedb = [
+    "lancedb>=0.17",
+    "pyarrow>=18.0",
+]
+pgvector = [
+    "asyncpg>=0.30",
+    "pgvector>=0.3",
+    "sqlalchemy[asyncio]>=2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chatbot_core"]

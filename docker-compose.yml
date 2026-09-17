@@ -1,0 +1,217 @@
+# Base stack. One project per stack; PROJECT selects which.
+#
+#   docker compose up -d                       api + mcp-server (model runs on the host)
+#   docker compose --profile ollama up -d      also run the model in a container
+#   PROJECT=my-project docker compose up -d    a different project
+#   docker compose logs -f api
+#   docker compose down
+#
+# Everything restarts unless explicitly stopped, so the stack survives a host
+# reboot without any init-system configuration.
+#
+# --- Why the model server is an opt-in profile ------------------------------
+# On macOS, containers get no Metal GPU access, so a model running inside Docker
+# is CPU-only and drastically slower -- and Docker Desktop's memory cap makes a
+# 7B model a tight fit besides. Run Ollama natively there (`brew services start
+# ollama`) and let the containers reach it via host.docker.internal.
+#
+# On a Linux server the reverse holds: containerise it, and add the GPU runtime
+# stanza noted on the ollama service below.
+#
+# Either way the API only ever knows a base_url, so this is a compose-level
+# choice that no application code is aware of.
+
+name: mcp-platform
+
+x-python-image: &python-image
+  build:
+    context: .
+    dockerfile: infra/docker/Dockerfile.python
+  image: mcp-platform/python:latest
+  restart: unless-stopped
+  # Lets containers resolve host.docker.internal on Linux too, where it is
+  # otherwise Docker-Desktop-only.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  # --- postgres -----------------------------------------------------------
+  # One database, two consumers: the durable turn log behind the dashboard's
+  # metrics and cohorts, and (once a project sets retrieval.backend: pgvector)
+  # the shared chunk index.
+  #
+  # The pgvector image rather than plain postgres, so switching a project's
+  # retrieval backend needs no new container -- the extension is already there
+  # and PgVectorStore issues its own CREATE EXTENSION at first use.
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mcp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mcp}
+      POSTGRES_DB: ${POSTGRES_DB:-mcp}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Published so psql and the ingest job can reach it from the host. Bind
+      # to 127.0.0.1 in any deployment that is not a developer laptop.
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      # `-U` matters: pg_isready otherwise probes as the OS user, which does
+      # not exist as a role here and reports the server down while it is fine.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mcp} -d ${POSTGRES_DB:-mcp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # --- tool server --------------------------------------------------------
+  mcp-server:
+    <<: *python-image
+    command: ["mcp-server", "--transport", "streamable-http", "--port", "8765"]
+    environment:
+      PROJECT: ${PROJECT:-_template}
+      MCP_SERVER_PROJECT: ${PROJECT:-_template}
+      MCP_SERVER_HOST: 0.0.0.0
+      MCP_SERVER_PORT: "8765"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Hosts the fetch_url tool may reach. Empty disables the tool entirely.
+      MCP_HTTP_ALLOWED_HOSTS: ${MCP_HTTP_ALLOWED_HOSTS:-}
+    volumes:
+      # Project tools and data, read-only: nothing here should write to source.
+      - ./projects:/app/projects:ro
+    ports:
+      - "${MCP_PORT:-8765}:8765"
+    healthcheck:
+      # A bare GET returns 400 (it expects a protocol handshake), so any HTTP
+      # response proves the listener is up. Connection refused is the failure.
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8765/mcp || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # --- chat api -----------------------------------------------------------
+  api:
+    <<: *python-image
+    command: ["chat-api", "--port", "8000"]
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      PROJECT: ${PROJECT:-_template}
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      # Durable turn log. Unset this to run without analytics: chat is
+      # unaffected and the dashboard's metrics panel says so explicitly.
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgresql://${POSTGRES_USER:-mcp}:${POSTGRES_PASSWORD:-mcp}@postgres:5432/${POSTGRES_DB:-mcp}}
+      # Read by PgVectorStore when a project sets retrieval.backend: pgvector.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-mcp}:${POSTGRES_PASSWORD:-mcp}@postgres:5432/${POSTGRES_DB:-mcp}}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      # Service name, not localhost: each container has its own loopback, so
+      # localhost here would point at the api itself.
+      MCP_SERVER_URL: http://mcp-server:8765/mcp
+      # Defaults to a model server on the host. With `--profile ollama`, set
+      # MODEL_BASE_URL=http://ollama:11434/v1 in .env instead.
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-http://host.docker.internal:11434/v1}
+      MODEL_ID: ${MODEL_ID:-qwen2.5:7b}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-console}
+      HF_HOME: /app/.cache/huggingface
+    volumes:
+      - ./projects:/app/projects:ro
+      - vector-store:/app/storage
+      # Named volume so the embedding model downloads once, not per restart.
+      - hf-cache:/app/.cache/huggingface
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      # Generous: a cold start may download the embedding model.
+      start_period: 120s
+
+  # --- corpus ingestion ---------------------------------------------------
+  # A job, not a service. Run it after changing a project's documents:
+  #
+  #   docker compose run --rm ingest
+  #   PROJECT=my-project docker compose run --rm ingest
+  #
+  # It writes to the same vector-store volume the api reads, so this is how a
+  # deployed corpus gets built or refreshed. Ingest is idempotent -- a
+  # document's old chunks are removed before its new ones are written.
+  #
+  # The api caches its store handle at startup, so restart it afterwards:
+  #   docker compose restart api
+  ingest:
+    <<: *python-image
+    profiles: ["jobs"]
+    restart: "no"
+    entrypoint: ["python", "-m", "chatbot_core.ingest"]
+    command: ["projects/${PROJECT:-_template}"]
+    environment:
+      PROJECT: ${PROJECT:-_template}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HF_HOME: /app/.cache/huggingface
+    volumes:
+      # Writable, unlike the api's mount: fetched documents are cached under
+      # projects/<name>/.cache so a re-ingest doesn't re-download.
+      - ./projects:/app/projects
+      - vector-store:/app/storage
+      - hf-cache:/app/.cache/huggingface
+
+  # --- model server (opt in: --profile ollama) ----------------------------
+  # Right for a Linux server. On a Linux host with NVIDIA, add:
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    healthcheck:
+      # No curl in this image; its own CLI is the reliable probe.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # One-shot: pull the model, then exit. Keeps the first `up` self-contained
+  # instead of failing with "model not found" on the first question.
+  model-init:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "pulling ${MODEL_ID:-qwen2.5:7b} (first run downloads several GB)"
+        ollama pull "${MODEL_ID:-qwen2.5:7b}"
+        echo "model ready"
+    volumes:
+      - ollama-models:/root/.ollama
+
+volumes:
+  vector-store:
+  hf-cache:
+  ollama-models:
+  postgres-data:

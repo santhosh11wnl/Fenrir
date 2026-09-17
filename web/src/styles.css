@@ -1,0 +1,800 @@
+/**
+ * Chat widget styles.
+ *
+ * Design intent: the launcher is a small, alive object that *becomes* the
+ * panel. Everything expands from the bottom-right corner it sits in, so the
+ * panel reads as the button opening rather than a dialog appearing somewhere
+ * unrelated.
+ *
+ * Constraints this has to respect, because the widget is embedded in someone
+ * else's page:
+ *   - Every selector is namespaced under .mcp-widget; nothing leaks out.
+ *   - No global resets, no styles on html/body/*.
+ *   - Colours come from CSS custom properties set at runtime from /theme, so
+ *     one build serves every project.
+ *   - Motion is gated behind prefers-reduced-motion.
+ */
+
+.mcp-widget {
+  /* Overridden per project from the /theme endpoint. */
+  --brand: #2563eb;
+  --accent: #7c3aed;
+
+  --surface: #ffffff;
+  --surface-sunken: #f7f8fa;
+  --border: #e6e8ec;
+  --ink: #0f1115;
+  --ink-soft: #5b6270;
+  --ink-faint: #8b93a1;
+  --danger: #dc2626;
+  --ok: #059669;
+
+  --radius: 18px;
+  --radius-sm: 12px;
+  --shadow-panel: 0 24px 60px -12px rgb(15 17 21 / 0.22), 0 8px 24px -8px rgb(15 17 21 / 0.14);
+  --shadow-button: 0 10px 28px -6px color-mix(in srgb, var(--brand) 55%, transparent);
+
+  /* A single easing used everywhere. Slight overshoot makes the open feel
+     physical rather than linear. */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2147483000;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.mcp-widget *,
+.mcp-widget *::before,
+.mcp-widget *::after {
+  box-sizing: border-box;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mcp-widget {
+    --surface: #14161a;
+    --surface-sunken: #1b1e24;
+    --border: #2a2e37;
+    --ink: #f2f4f7;
+    --ink-soft: #a8b0bd;
+    --ink-faint: #737b88;
+    --shadow-panel: 0 24px 60px -12px rgb(0 0 0 / 0.6), 0 8px 24px -8px rgb(0 0 0 / 0.45);
+  }
+}
+
+/* ========================================================================
+   Launcher
+   ======================================================================== */
+
+.launcher {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand), var(--accent));
+  box-shadow: var(--shadow-button);
+  transition:
+    transform 0.4s var(--ease),
+    box-shadow 0.4s var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.launcher:hover {
+  transform: translateY(-2px) scale(1.05);
+}
+
+.launcher:active {
+  transform: translateY(0) scale(0.96);
+}
+
+.launcher:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--brand) 60%, white);
+  outline-offset: 3px;
+}
+
+/* Open state: shrink and go quiet, so attention moves to the panel. */
+.launcher--open {
+  transform: scale(0.88);
+  box-shadow: 0 4px 12px -4px rgb(15 17 21 / 0.25);
+}
+
+/* Breathing rings. Decorative, and the first thing to go under
+   prefers-reduced-motion. */
+.launcher__halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--brand), var(--accent));
+  opacity: 0;
+  animation: halo 3.2s var(--ease) infinite;
+}
+
+.launcher__halo--delayed {
+  animation-delay: 1.6s;
+}
+
+.launcher--open .launcher__halo {
+  animation-play-state: paused;
+  opacity: 0;
+}
+
+@keyframes halo {
+  0%   { transform: scale(1);   opacity: 0.45; }
+  70%  { transform: scale(1.6); opacity: 0; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* While a reply streams, the ring pulses faster -- the widget stays alive
+   even when collapsed. */
+.launcher--busy .launcher__halo {
+  animation-duration: 1.4s;
+}
+
+.launcher__face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+}
+
+.launcher__icon {
+  position: absolute;
+  inset: 0;
+  width: 26px;
+  height: 26px;
+  transition:
+    opacity 0.28s var(--ease),
+    transform 0.4s var(--ease);
+}
+
+/* Crossfade + counter-rotate: one control changing state, not two buttons. */
+.launcher__icon--chat  { opacity: 1; transform: rotate(0) scale(1); }
+.launcher__icon--close { opacity: 0; transform: rotate(-90deg) scale(0.6); }
+.launcher--open .launcher__icon--chat  { opacity: 0; transform: rotate(90deg) scale(0.6); }
+.launcher--open .launcher__icon--close { opacity: 1; transform: rotate(0) scale(1); }
+
+.launcher__badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 13px;
+  height: 13px;
+  border: 2.5px solid var(--surface);
+  border-radius: 50%;
+  background: #f43f5e;
+  animation: pop 0.34s var(--ease);
+}
+
+@keyframes pop {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+
+/* ========================================================================
+   Panel
+   ======================================================================== */
+
+.panel {
+  position: absolute;
+  right: 0;
+  bottom: 76px;
+  display: flex;
+  flex-direction: column;
+  width: min(410px, calc(100vw - 32px));
+  height: min(620px, calc(100vh - 140px));
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+
+  /* Closed: collapsed toward the launcher, not merely transparent. */
+  transform: translateY(16px) scale(0.92);
+  transform-origin: bottom right;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.42s var(--ease),
+    opacity 0.28s var(--ease),
+    visibility 0.42s;
+  visibility: hidden;
+}
+
+.panel--open {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.panel__head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--brand) 9%, var(--surface)),
+    color-mix(in srgb, var(--accent) 7%, var(--surface))
+  );
+}
+
+.panel__identity {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  min-width: 0;
+}
+
+.panel__mark,
+.panel__logo {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  object-fit: cover;
+}
+
+.panel__mark {
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 650;
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand), var(--accent));
+}
+
+.panel__titles { min-width: 0; }
+
+.panel__title {
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 640;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel__status {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 1px 0 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.dot--busy {
+  background: var(--brand);
+  animation: blink 1.1s ease-in-out infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0.25; }
+}
+
+.panel__actions { display: flex; gap: 2px; }
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--ink-soft);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  transition: background 0.16s, color 0.16s;
+}
+
+.icon-button svg { width: 17px; height: 17px; }
+
+.icon-button:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+/* A disabled control must read as disabled. Styling it like an active button
+   invites the click that the `disabled` attribute then silently swallows. */
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.icon-button:disabled:hover {
+  color: var(--ink-soft);
+  background: transparent;
+}
+
+.panel__body {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain; /* don't scroll the host page at the ends */
+  scrollbar-width: thin;
+}
+
+.panel__body::-webkit-scrollbar { width: 8px; }
+.panel__body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+  border: 2px solid var(--surface);
+  border-radius: 99px;
+}
+
+.panel__foot {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* ========================================================================
+   Welcome
+   ======================================================================== */
+
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 8px;
+  text-align: center;
+}
+
+.welcome__mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin-bottom: 14px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand), var(--accent));
+  border-radius: 16px;
+  box-shadow: var(--shadow-button);
+}
+
+.welcome__mark svg { width: 26px; height: 26px; }
+
+.welcome__greeting {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 620;
+}
+
+.welcome__description {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.welcome__suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.suggestion {
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: transform 0.16s var(--ease), border-color 0.16s, background 0.16s;
+}
+
+.suggestion:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand) 6%, var(--surface));
+  border-color: color-mix(in srgb, var(--brand) 40%, var(--border));
+  transform: translateX(2px);
+}
+
+.suggestion:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* ========================================================================
+   Messages
+   ======================================================================== */
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-width: 100%;
+  animation: rise 0.34s var(--ease);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg--user { align-items: flex-end; }
+.msg--assistant { align-items: flex-start; }
+
+.msg__bubble {
+  max-width: 88%;
+  padding: 10px 14px;
+  overflow-wrap: anywhere; /* a long URL must not widen the panel */
+  white-space: pre-wrap;   /* preserve the model's own line breaks */
+  border-radius: var(--radius-sm);
+}
+
+.msg--user .msg__bubble {
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand), var(--accent));
+  border-bottom-right-radius: 4px;
+}
+
+.msg--assistant .msg__bubble {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+
+.msg__typing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  height: 20px;
+}
+
+.msg__typing i {
+  width: 6px;
+  height: 6px;
+  background: var(--ink-faint);
+  border-radius: 50%;
+  animation: bounce 1.3s ease-in-out infinite;
+}
+
+.msg__typing i:nth-child(2) { animation-delay: 0.16s; }
+.msg__typing i:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-5px); opacity: 1; }
+}
+
+.msg__error {
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.banner--error {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* ========================================================================
+   Tool activity
+   ======================================================================== */
+
+.msg__tools {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+
+.tool {
+  overflow: hidden;
+  font-size: 12.5px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.tool--running {
+  border-color: color-mix(in srgb, var(--brand) 35%, var(--border));
+}
+
+.tool__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  color: var(--ink-soft);
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.tool__head:hover { color: var(--ink); }
+
+.tool__status {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+}
+
+.tool__status svg { width: 14px; height: 14px; }
+.tool--ok .tool__status { color: var(--ok); }
+.tool--error .tool__status { color: var(--danger); }
+
+.tool__spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.8px solid color-mix(in srgb, var(--brand) 28%, transparent);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.tool__name {
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool__timing {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+.tool__chevron { display: grid; place-items: center; }
+.tool__chevron svg { width: 13px; height: 13px; }
+.tool__head[aria-expanded="true"] .tool__chevron { transform: rotate(180deg); }
+
+.tool__body {
+  padding: 0 10px 9px;
+  border-top: 1px solid var(--border);
+}
+
+.tool__label {
+  margin: 8px 0 3px;
+  font-size: 10.5px;
+  font-weight: 620;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tool__pre {
+  max-height: 160px;
+  padding: 7px 9px;
+  margin: 0;
+  overflow: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  border-radius: 7px;
+}
+
+/* ========================================================================
+   Sources
+   ======================================================================== */
+
+.msg__sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.msg__sources-label {
+  font-size: 10.5px;
+  font-weight: 620;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.source {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 9px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  transition: border-color 0.16s, color 0.16s;
+}
+
+.source:hover {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--brand) 40%, var(--border));
+}
+
+.source__index {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  font-size: 10.5px;
+  font-weight: 640;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 13%, transparent);
+  border-radius: 5px;
+}
+
+.source__title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source__score {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+/* ========================================================================
+   Composer
+   ======================================================================== */
+
+.composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 6px 6px 6px 14px;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  transition: border-color 0.18s, background 0.18s, opacity 0.18s;
+}
+
+.composer:focus-within {
+  background: var(--surface);
+  border-color: var(--brand);
+}
+
+/* The locked state is deliberately visible: a disabled field with no
+   explanation reads as a broken widget. */
+.composer--busy {
+  background: var(--surface-sunken);
+  border-color: color-mix(in srgb, var(--brand) 30%, var(--border));
+  opacity: 0.75;
+}
+
+.composer__input {
+  flex: 1;
+  max-height: 120px;
+  padding: 8px 0;
+  font: inherit;
+  color: var(--ink);
+  resize: none;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+.composer__input::placeholder { color: var(--ink-faint); }
+
+.composer__input:disabled {
+  cursor: not-allowed;
+  /* Keep the placeholder legible -- it is carrying the explanation. */
+  -webkit-text-fill-color: var(--ink-faint);
+}
+
+.composer__action {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  color: #fff;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--brand), var(--accent));
+  border: none;
+  border-radius: 10px;
+  transition: transform 0.16s var(--ease), opacity 0.16s;
+}
+
+.composer__action svg { width: 18px; height: 18px; }
+.composer__action:hover:not(:disabled) { transform: scale(1.07); }
+.composer__action:active:not(:disabled) { transform: scale(0.94); }
+
+.composer__action:disabled {
+  cursor: default;
+  background: var(--border);
+  opacity: 0.6;
+}
+
+.composer__action--stop {
+  background: var(--danger);
+  animation: breathe 1.7s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  50% { opacity: 0.78; }
+}
+
+.composer__action:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* ========================================================================
+   Small screens
+   ======================================================================== */
+
+@media (max-width: 480px) {
+  .mcp-widget { right: 16px; bottom: 16px; }
+
+  /* Near-fullscreen: a 410px panel on a phone leaves unusable margins. */
+  .panel {
+    position: fixed;
+    inset: 12px 12px 88px;
+    width: auto;
+    height: auto;
+  }
+}
+
+/* ========================================================================
+   Reduced motion
+   ======================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .mcp-widget *,
+  .mcp-widget *::before,
+  .mcp-widget *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* The panel still needs to appear and disappear -- only the travel goes. */
+  .panel { transform: none; }
+  .panel--open { transform: none; }
+}

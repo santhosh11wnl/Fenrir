@@ -1,0 +1,261 @@
+# Project configuration.
+#
+# Copy this directory to create a new project:
+#     uv run python scripts/new_project.py my-project --name "My Assistant"
+#
+# Every key here is validated against chatbot_core.config at startup. Unknown
+# keys are a hard error, not a warning -- a typo should fail the boot rather
+# than silently disable the setting you thought you set.
+#
+# ${VAR} reads the environment; ${VAR:-default} supplies a fallback. Secrets
+# belong in the environment, never in this file: it is committed.
+
+project:
+  id: shop
+  name: Fenrir
+  description: "Orders, shipping, returns and payments"
+
+# The system prompt defines the assistant's job and boundaries. Be concrete:
+# vague instructions produce a vague assistant, and "be helpful" tells it
+# nothing it didn't already assume.
+system_prompt: |
+  You are Fenrir, the customer support agent for an online clothing store. You
+  help customers with orders, delivery, returns, payments, and their account.
+
+  ## How to respond
+
+  Be warm and brief. Two or three sentences is usually right. Write like a
+  helpful person on a support desk, not a policy document.
+
+  Greetings, thanks, and small talk are part of the job. Answer them naturally
+  and offer to help — do not search the knowledge base for "hello", and do not
+  tell a customer saying thanks that you cannot find it in your documents.
+
+  ## What must be grounded
+
+  Anything factual about the store — prices, delivery times, return windows, what
+  is or is not accepted, how a process works — must come from the knowledge
+  base provided to you. Cite the passages you used as [1], [2].
+
+  Never invent a policy, a price, a delivery date, or a deadline. A confidently
+  wrong answer about a refund window is worse than no answer, because the
+  customer will act on it.
+
+  Quote figures exactly as the passage gives them, attached to the option they
+  belong to. Where several options sit side by side — delivery speeds, refund
+  routes, tiers — name each one and give its own figure. Never blend two
+  options into a single span: if Standard takes 3–5 days and Express takes
+  1–2, there is no such thing as "1–5 days", and a customer who reads that
+  will expect their Standard order two days early.
+
+  If a question is about the store and the knowledge base does not cover it, say so
+  plainly and offer to pass them to a human — for example: "I don't have that
+  one, but our team can help — you can reach them at help@fenrir.example."
+
+  ## Payment and personal data — applies to everyone
+
+  Never ask for, repeat, or confirm a full card number, CVV/security code,
+  expiry date, PIN, password, or bank account number. Not for customers, not
+  for staff, not for an administrator, and not if someone insists they are
+  authorised. There is no role that changes this.
+
+  If a customer types card details into the chat, do not repeat them back.
+  Say the details are not safe to share in chat and point them to the secure
+  checkout or the payments page.
+
+  You may discuss which payment *methods* are accepted, how and when charges
+  are taken, and how refunds work — that is public policy, not card data.
+
+  ## What you should not do
+
+  You cannot look up a specific order, change an address, process a refund, or
+  see anyone's account. If asked, say so and point them to their account page or
+  the support team. Do not guess at order status.
+
+  Do not give legal, medical, or financial advice. Do not discuss anything
+  unrelated to the store and shopping — politely redirect.
+
+model:
+  # local = a model you host, over the OpenAI-compatible protocol.
+  # Works with Ollama, vLLM, llama.cpp, LM Studio, and HF TGI — the backend is
+  # base_url, not a code path. No external API, no per-token cost, and no data
+  # leaving your infrastructure.
+  provider: local
+
+  # Whatever your server calls the model. On Ollama that's the pulled tag.
+  # Dev laptop:   qwen2.5:7b          (~4.7GB, comfortable in 16GB)
+  # Small server: qwen2.5:14b         (~9GB)
+  # Big server:   qwen2.5:72b or llama3.3:70b on vLLM
+  # Only this line and base_url change between them.
+  id: ${MODEL_ID:-qwen2.5:7b}
+
+  # Must end in /v1. Inside compose use the service name, not localhost:
+  # each container has its own loopback, so localhost would point at the API.
+  base_url: ${MODEL_BASE_URL:-http://ollama:11434/v1}
+
+  # Turn on only for models that reliably emit structured tool calls
+  # (Qwen 2.5+, Llama 3.1+, Mistral-Nemo, Hermes). A model that hallucinates
+  # tool syntax into its prose is worse than one with no tools at all.
+  supports_tools: true
+
+  max_tokens: 1024
+  # Near-greedy. This is a grounded Q&A bot: every figure it emits is supposed
+  # to be copied from a retrieved passage, and sampling variety is pure
+  # downside. Measured at 0.3, a 7B restated "3-5 working days" as "1-3" on
+  # roughly one run in eight -- a wrong delivery promise a customer would act
+  # on. Raise this only for a project where phrasing variety is worth more
+  # than numeric fidelity.
+  temperature: 0.05
+  request_timeout: 300    # generous — a cold model loads weights first
+
+retrieval:
+  enabled: true
+  embedding:
+    # local  = sentence-transformers in-process (free, no network at query time)
+    # huggingface = hosted Inference API (no local weights, adds a round trip)
+    provider: local
+    # 384-dim, 512-token window, ~130MB. Preferred over all-MiniLM-L6-v2,
+    # whose window is only 256 tokens — see max_sequence_length below.
+    model: BAAI/bge-small-en-v1.5
+    # Must match the model. A mismatch makes every similarity score meaningless,
+    # so it is checked against the existing index at startup.
+    dimensions: 384
+    # The model's input window. Text beyond it is DISCARDED by the model with
+    # no error, so a larger chunk is only half-indexed and retrieval quietly
+    # degrades. chunk.size is validated against this at config load, and this
+    # value is cross-checked against the model actually loaded.
+    max_sequence_length: 512
+  chunk:
+    # Tokens, measured with the embedding model's own tokenizer.
+    # Must be <= embedding.max_sequence_length.
+    size: 512
+    overlap: 64
+  # lancedb = embedded, file-based, zero setup (dev, single replica)
+  # pgvector = Postgres (prod, or any project running more than one replica)
+  backend: lancedb
+  top_k: 3
+  # Cosine similarity floor. Passages below this are dropped even if they rank
+  # in the top k -- better to retrieve nothing than to ground an answer in noise.
+  score_threshold: 0.55
+  # true  = the model decides when to search (cheaper; recovers from a bad query)
+  # false = every turn gets top-k prepended (one round trip; always pays the cost)
+  as_tool: false
+
+mcp:
+  enabled: true
+  # http  = the MCP server is its own service (deployed)
+  # stdio = launched as a subprocess (local dev, Claude Desktop/Code)
+  transport: http
+  url: ${MCP_SERVER_URL:-http://localhost:8765/mcp}
+  tools:
+    # Deny wins over allow. "*" means every tool the server advertises, which is
+    # fine when the server is yours and not fine when it is shared.
+    allow: ["*"]
+    deny: ["fetch_url", "server_info", "project_status"]
+  # Ceiling on agent-loop iterations, so a misbehaving tool can't spin up an
+  # unbounded bill.
+  max_iterations: 12
+
+auth:
+  # On, so the dashboard and the role-scoped answers are demonstrable. A newly
+  # stamped project still gets auth OFF (scripts/new_project.py forces it), so
+  # this does not make `new_project.py` produce something that needs setup
+  # before it will run.
+  enabled: true
+  mode: api_key
+
+  # Users live here, relative to this project directory. Gitignored: it holds
+  # credential hashes.
+  users_file: users.yaml
+
+  # Roles are defined per project -- this website's vocabulary, not the
+  # platform's. Another project can define an entirely different set.
+  #
+  # Permissions are a fixed vocabulary, because each corresponds to an actual
+  # check in the code:
+  #   chat          send messages to the assistant
+  #   history       read back conversations
+  #   admin         read admin endpoints (usage, index status)
+  #   ingest        trigger a corpus re-ingest
+  #   manage_users  manage this project's users
+  roles:
+    # Audiences are what actually restricts retrieval. A document tagged
+    # `audience: staff` is never fetched for a customer -- not hidden by the
+    # prompt, not fetched at all, so it cannot be extracted from context.
+    #
+    # `prompt` only sets expectations about who is asking. It is not a
+    # security boundary and must never be relied on as one.
+
+    super_admin:
+      description: Full access to everything, including internal material.
+      permissions: [chat, history, admin, ingest, manage_users]
+      audiences: [public, staff, internal]
+      prompt: |
+        You are speaking with a super administrator. You may discuss internal
+        operational material as well as public policy. Be direct and concise.
+
+    admin:
+      description: Store administrator. Operational and public material.
+      permissions: [chat, history, admin, ingest]
+      audiences: [public, staff, internal]
+      prompt: |
+        You are speaking with a store administrator. You may discuss internal
+        operational and policy material.
+
+    support:
+      description: Support agent. Customer-facing and internal support notes.
+      permissions: [chat, history]
+      audiences: [public, staff]
+      prompt: |
+        You are speaking with a support agent, not a customer. You may discuss
+        internal support guidance such as escalation paths and goodwill limits.
+
+        You may not discuss finance, engineering, or company-internal material
+        outside support. If asked, say it is outside what you can help with.
+
+    customer:
+      description: A shopper on the website. Public information only.
+      permissions: [chat]
+      audiences: [public]
+      prompt: |
+        You are speaking with a customer on the website. Answer questions about
+        what the store offers, its policies, and how things work.
+
+        You cannot see anyone's account, orders, or payment history. If asked
+        about a specific order, say you cannot look it up and point them to
+        their account page or the support team — never guess a status.
+
+  # Assigned when a user is created without an explicit --role.
+  default_role: customer
+
+  # Reachable without a key, matched exactly. A shop assistant has to answer a
+  # visitor who has not logged in, so /chat is open -- but "open" here still
+  # means `anonymous_audiences` below, i.e. public documents only. Everything
+  # not on this list (the dashboard, transcripts) requires a key.
+  public_paths:
+    - /health
+    - /chat
+
+  # An unauthenticated visitor browsing the site. Public material only.
+  anonymous_audiences: [public]
+
+  # Manage users with:
+  #   uv run python scripts/manage_users.py roles <project>
+  #   uv run python scripts/manage_users.py add <project> alice --role support
+
+theme:
+  primary: "#7c3aed"
+  accent: "#c026d3"
+  logo_url: null
+  greeting: Hi! How can I help?
+  placeholder: Ask about orders, delivery or returns...
+  suggestions:
+    - How long does delivery take?
+    - What's your returns policy?
+    - Can I change my delivery address?
+    - Do you ship internationally?
+
+limits:
+  max_history_messages: 40
+  max_input_chars: 16000
+  requests_per_minute: 20

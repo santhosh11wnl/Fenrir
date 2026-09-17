@@ -1,0 +1,48 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.uv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- node ---
+node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+
+# --- local data / indexes ---
+# Project corpora and vector indexes are large and environment-specific.
+# Source documents live wherever ingest.yaml points; indexes are rebuildable.
+projects/*/data/**
+# Credential hashes. Never commit.
+projects/*/users.yaml
+!projects/*/data/.gitkeep
+*.lance/
+.lancedb/
+storage/
+
+# --- os / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+users.yaml
+
+# --- ingest fetch cache (rebuildable) ---
+projects/*/.cache/

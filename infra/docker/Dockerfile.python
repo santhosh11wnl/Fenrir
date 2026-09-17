@@ -1,0 +1,78 @@
+# Shared image for both Python services.
+#
+# One image, two entrypoints: compose runs it as `mcp-server` or `chat-api`.
+# They share nearly all their dependencies, so two images would double build
+# time and registry size to save nothing.
+#
+# Multi-stage: the builder holds uv and the full dependency resolution; the
+# runtime carries only the resolved virtualenv and the source.
+
+# ---- builder ---------------------------------------------------------------
+FROM python:3.12-slim-bookworm AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+WORKDIR /app
+
+# Manifests first, source later: dependency resolution is the slow layer, and
+# this way it is only redone when a manifest actually changes.
+COPY pyproject.toml uv.lock ./
+COPY packages/chatbot-core/pyproject.toml packages/chatbot-core/
+COPY packages/mcp-server-core/pyproject.toml packages/mcp-server-core/
+COPY services/api/pyproject.toml services/api/
+
+# Extras are a build arg so a GPU or CPU-only image can be produced from the
+# same Dockerfile. The default is the CPU set needed to actually run.
+ARG EXTRAS="--extra lancedb --extra local-embeddings --extra documents"
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-workspace --all-packages ${EXTRAS}
+
+COPY packages/ packages/
+COPY services/ services/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --all-packages ${EXTRAS}
+
+# ---- runtime ---------------------------------------------------------------
+FROM python:3.12-slim-bookworm AS runtime
+
+# curl is used by the compose healthchecks; nothing else is needed at runtime.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Run as a non-root user. Tool code executes in this process, so the blast
+# radius of a compromised tool is this user's permissions.
+RUN groupadd --system --gid 1001 app \
+    && useradd --system --uid 1001 --gid app --create-home app
+
+WORKDIR /app
+
+COPY --from=builder --chown=app:app /app/.venv /app/.venv
+COPY --from=builder --chown=app:app /app/packages /app/packages
+COPY --from=builder --chown=app:app /app/services /app/services
+
+# Operational scripts. They belong in the image because several of them are
+# only meaningful *inside* a running container -- check_audiences.py has to
+# query the store the API actually reads, which on the LanceDB backend is a
+# file in the container's volume, not anything reachable from the host.
+COPY --chown=app:app scripts/ /app/scripts/
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # Model weights land here. Compose mounts a volume so the ~130MB embedding
+    # model is downloaded once, not on every container start.
+    HF_HOME=/app/.cache/huggingface
+
+RUN mkdir -p /app/.cache/huggingface /app/storage && chown -R app:app /app/.cache /app/storage
+
+USER app
+
+# Overridden per service in compose.
+CMD ["chat-api"]

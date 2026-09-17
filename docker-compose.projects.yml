@@ -1,0 +1,72 @@
+# Additional projects.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.projects.yml up -d
+#   # or:  mcpall
+#
+# The base compose file runs ONE project, because one API process serves one
+# project -- that is what makes cross-site isolation structural rather than a
+# runtime check. Running several sites means several services.
+#
+# To add the fifth, sixth, seventh: copy a block, change the service name, the
+# PROJECT value, and the published port. Nothing else differs, because the
+# image is identical -- only configuration separates one assistant from another.
+#
+# All of them share the one model server and the one MCP server. The MCP server
+# loads whichever project's tools MCP_SERVER_PROJECT names; give a site its own
+# mcp-server service if its tools must not be visible to the others.
+
+x-project-api: &project-api
+  build:
+    context: .
+    dockerfile: infra/docker/Dockerfile.python
+  image: mcp-platform/python:latest
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  command: ["chat-api", "--port", "8000"]
+  volumes:
+    - ./projects:/app/projects:ro
+    - vector-store:/app/storage
+    - hf-cache:/app/.cache/huggingface
+  healthcheck:
+    test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+    interval: 15s
+    timeout: 10s
+    retries: 6
+    start_period: 120s
+
+x-project-env: &project-env
+  API_HOST: 0.0.0.0
+  API_PORT: "8000"
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+  MCP_SERVER_URL: http://mcp-server:8765/mcp
+  MODEL_BASE_URL: ${MODEL_BASE_URL:-http://host.docker.internal:11434/v1}
+  MODEL_ID: ${MODEL_ID:-qwen2.5:7b}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-console}
+  HF_HOME: /app/.cache/huggingface
+
+services:
+  # --- support-bot, on :8001 ----------------------------------------------
+  api-support:
+    <<: *project-api
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    environment:
+      <<: *project-env
+      PROJECT: support-bot
+    ports:
+      - "8001:8000"
+
+  # --- copy this block for each further site ------------------------------
+  # api-acme:
+  #   <<: *project-api
+  #   depends_on:
+  #     mcp-server:
+  #       condition: service_healthy
+  #   environment:
+  #     <<: *project-env
+  #     PROJECT: acme-docs
+  #   ports:
+  #     - "8002:8000"
